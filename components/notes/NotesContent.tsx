@@ -291,32 +291,37 @@ function NoteDescriptionEditor({ value, onChange }: { value: string; onChange: (
 interface NoteFormData {
   title: string
   content: string
-  tags: string
+  tags: string[]
   color: string
 }
 
 // ─── NoteDialog (create / edit) ───────────────────────────────────────────────
 
 function NoteDialog({
-  open, onClose, onSave, initial,
+  open, onClose, onSave, initial, allTags,
 }: {
   open: boolean
   onClose: () => void
   onSave: (data: NoteFormData) => void
   initial?: Note | null
+  allTags: string[]
 }) {
-  const [form, setForm] = useState<NoteFormData>({
-    title: '', content: '', tags: '', color: 'default',
+  const [form, setForm] = useState<Omit<NoteFormData, 'tags'>>({
+    title: '', content: '', color: 'default',
   })
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [newTagInput, setNewTagInput] = useState('')
 
   // Sync form whenever dialog opens
   useState(() => {
     if (open) {
       setForm(
         initial
-          ? { title: initial.title, content: initial.content, tags: initial.tags.join(', '), color: initial.color ?? 'default' }
-          : { title: '', content: '', tags: '', color: 'default' }
+          ? { title: initial.title, content: initial.content, color: initial.color ?? 'default' }
+          : { title: '', content: '', color: 'default' }
       )
+      setSelectedTags(initial ? initial.tags : [])
+      setNewTagInput('')
     }
   })
 
@@ -327,13 +332,13 @@ function NoteDialog({
     if (open) {
       setForm(
         initial
-          ? { title: initial.title, content: initial.content, tags: initial.tags.join(', '), color: initial.color ?? 'default' }
-          : { title: '', content: '', tags: '', color: 'default' }
+          ? { title: initial.title, content: initial.content, color: initial.color ?? 'default' }
+          : { title: '', content: '', color: 'default' }
       )
+      setSelectedTags(initial ? initial.tags : [])
+      setNewTagInput('')
     }
   }
-
-  const selectedColor = getNoteColor(form.color)
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -362,40 +367,101 @@ function NoteDialog({
             />
           </div>
 
-          {/* Tags */}
-          <div className="grid gap-1.5">
-            <Label>Tags (comma separated)</Label>
-            <Input
-              placeholder="e.g. work, ideas, important"
-              value={form.tags}
-              onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
-            />
-          </div>
+          {/* Tags Section */}
+          <div className="grid gap-2">
+            <Label>Tags</Label>
 
-          {/* Color picker */}
-          {/* <div className="grid gap-2">
-            <Label>Color</Label>
-            <div className="flex flex-wrap gap-2">
-              {NOTE_COLORS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  title={c.label}
-                  onClick={() => setForm((f) => ({ ...f, color: c.value }))}
-                  className={cn(
-                    'w-7 h-7 rounded-full border-2 transition-all cursor-pointer',
-                    c.value === 'default'
-                      ? 'bg-muted border-border'
-                      : `${c.accent} border-transparent`,
-                    form.color === c.value && 'ring-2 ring-offset-2 ring-offset-background ring-primary scale-110'
-                  )}
-                />
-              ))}
-              <span className="text-xs text-muted-foreground self-center ml-1">
-                {selectedColor.label}
-              </span>
+            {/* Selected Tags list */}
+            {selectedTags.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-dashed border-border bg-muted/20 min-h-[40px] items-center">
+                {selectedTags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-primary/15 text-primary border border-primary/25"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTags((prev) => prev.filter((t) => t !== tag))}
+                      className="hover:bg-primary/20 rounded-full p-0.5 transition-colors cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic px-1">No tags selected</p>
+            )}
+
+            {/* Input to add a new tag */}
+            <div className="flex gap-2">
+              <Input
+                placeholder="Type a new tag name..."
+                value={newTagInput}
+                onChange={(e) => setNewTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const cleanTag = newTagInput.trim().toLowerCase()
+                    if (cleanTag && !selectedTags.includes(cleanTag)) {
+                      setSelectedTags((prev) => [...prev, cleanTag])
+                      setNewTagInput('')
+                    }
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  const cleanTag = newTagInput.trim().toLowerCase()
+                  if (cleanTag && !selectedTags.includes(cleanTag)) {
+                    setSelectedTags((prev) => [...prev, cleanTag])
+                    setNewTagInput('')
+                  }
+                }}
+              >
+                Add
+              </Button>
             </div>
-          </div> */}
+
+            {/* Existing tags to select from */}
+            {allTags.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider block">
+                  Or select existing tags:
+                </span>
+                <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto pr-1">
+                  {allTags.map((tag) => {
+                    const isSelected = selectedTags.includes(tag)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedTags((prev) => prev.filter((t) => t !== tag))
+                          } else {
+                            setSelectedTags((prev) => [...prev, tag])
+                          }
+                        }}
+                        className={cn(
+                          'text-xs px-2.5 py-1 rounded-full border transition-all cursor-pointer flex items-center gap-1',
+                          isSelected
+                            ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                            : 'border-border bg-card text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'
+                        )}
+                      >
+                        {tag}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="px-6 py-4 border-t border-border/40 gap-2 flex-row justify-end shrink-0 bg-muted/10">
@@ -403,7 +469,12 @@ function NoteDialog({
           <Button
             onClick={() => {
               if (form.title.trim()) {
-                onSave(form)
+                onSave({
+                  title: form.title,
+                  content: form.content,
+                  tags: selectedTags,
+                  color: form.color,
+                })
                 onClose()
               }
             }}
@@ -768,12 +839,12 @@ export function NotesContent() {
         open={dialogOpen}
         onClose={() => { setDialogOpen(false); setEditNote(null) }}
         initial={editNote}
+        allTags={allTags}
         onSave={(data) => {
-          const tags = data.tags.split(',').map((t) => t.trim()).filter(Boolean)
           if (editNote) {
-            updateNote(editNote.id, { title: data.title, content: data.content, tags, color: data.color })
+            updateNote(editNote.id, { title: data.title, content: data.content, tags: data.tags, color: data.color })
           } else {
-            addNote({ title: data.title, content: data.content, tags, color: data.color })
+            addNote({ title: data.title, content: data.content, tags: data.tags, color: data.color })
           }
         }}
       />
