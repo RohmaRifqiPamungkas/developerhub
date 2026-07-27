@@ -74,7 +74,6 @@ export function useNotes() {
         content: data.content,
         tags: data.tags,
         pinned: false,
-        color: data.color ?? null,
         created_at: now,
         updated_at: now,
       })
@@ -100,7 +99,6 @@ export function useNotes() {
       if ('content' in updates) dbPatch.content = updates.content
       if ('tags' in updates) dbPatch.tags = updates.tags
       if ('pinned' in updates) dbPatch.pinned = updates.pinned
-      if ('color' in updates) dbPatch.color = updates.color ?? null
 
       const { error } = await supabase.from('notes').update(dbPatch).eq('id', id)
       if (error) console.error('[useNotes] update error:', error)
