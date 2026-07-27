@@ -4,8 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Search, Pin, Trash2, Edit3, Tag, X, StickyNote,
   Bold, Italic, List, ListOrdered, CheckSquare, Eye, AlertTriangle,
+  Lock, Unlock,
 } from 'lucide-react'
 import { useNotes } from '@/hooks/useNotes'
+import { isEncrypted, encryptText, decryptText } from '@/lib/crypto'
 import { Note } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -298,19 +300,23 @@ interface NoteFormData {
 // ─── NoteDialog (create / edit) ───────────────────────────────────────────────
 
 function NoteDialog({
-  open, onClose, onSave, initial, allTags,
+  open, onClose, onSave, initial, allTags, defaultPassword = '',
 }: {
   open: boolean
   onClose: () => void
   onSave: (data: NoteFormData) => void
   initial?: Note | null
   allTags: string[]
+  defaultPassword?: string
 }) {
   const [form, setForm] = useState<Omit<NoteFormData, 'tags'>>({
     title: '', content: '', color: 'default',
   })
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [newTagInput, setNewTagInput] = useState('')
+  const [encryptToggle, setEncryptToggle] = useState(false)
+  const [encryptionPassword, setEncryptionPassword] = useState('')
+  const [saving, setSaving] = useState(false)
 
   // Sync form whenever dialog opens
   useState(() => {
@@ -322,6 +328,8 @@ function NoteDialog({
       )
       setSelectedTags(initial ? initial.tags : [])
       setNewTagInput('')
+      setEncryptToggle(!!defaultPassword)
+      setEncryptionPassword(defaultPassword)
     }
   })
 
@@ -337,6 +345,8 @@ function NoteDialog({
       )
       setSelectedTags(initial ? initial.tags : [])
       setNewTagInput('')
+      setEncryptToggle(!!defaultPassword)
+      setEncryptionPassword(defaultPassword)
     }
   }
 
@@ -366,6 +376,40 @@ function NoteDialog({
               onChange={(v) => setForm((f) => ({ ...f, content: v }))}
             />
           </div>
+
+          {/* Encryption Toggle */}
+          <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 gap-4">
+            <div className="space-y-0.5">
+              <span className="text-sm font-medium flex items-center gap-1.5">
+                <Lock className="w-4 h-4 text-amber-500" /> Secure Note (Encrypt)
+              </span>
+              <p className="text-xs text-muted-foreground">
+                Encrypt this note's content client-side. Supabase only stores encrypted text.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={encryptToggle}
+              onChange={(e) => setEncryptToggle(e.target.checked)}
+              className="rounded border-border text-primary focus:ring-0 w-4 h-4 cursor-pointer"
+            />
+          </div>
+
+          {/* Encryption Password Input */}
+          {encryptToggle && (
+            <div className="grid gap-1.5 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
+              <Label className="text-amber-500 font-semibold">Encryption Password *</Label>
+              <Input
+                type="password"
+                placeholder="Enter password to encrypt..."
+                value={encryptionPassword}
+                onChange={(e) => setEncryptionPassword(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Warning: If you lose this password, your note content cannot be recovered.
+              </p>
+            </div>
+          )}
 
           {/* Tags Section */}
           <div className="grid gap-2">
@@ -465,21 +509,39 @@ function NoteDialog({
         </div>
 
         <DialogFooter className="px-6 py-4 border-t border-border/40 gap-2 flex-row justify-end shrink-0 bg-muted/10">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button
-            onClick={() => {
+            disabled={saving}
+            onClick={async () => {
               if (form.title.trim()) {
-                onSave({
-                  title: form.title,
-                  content: form.content,
-                  tags: selectedTags,
-                  color: form.color,
-                })
-                onClose()
+                setSaving(true)
+                try {
+                  let finalContent = form.content
+                  if (encryptToggle) {
+                    if (!encryptionPassword) {
+                      alert('Please enter an encryption password.')
+                      setSaving(false)
+                      return
+                    }
+                    finalContent = await encryptText(form.content, encryptionPassword)
+                  }
+                  onSave({
+                    title: form.title,
+                    content: finalContent,
+                    tags: selectedTags,
+                    color: form.color,
+                  })
+                  onClose()
+                } catch (err) {
+                  console.error(err)
+                  alert('Encryption failed. Please check your password.')
+                } finally {
+                  setSaving(false)
+                }
               }
             }}
           >
-            {initial ? 'Save Changes' : 'Add Note'}
+            {saving ? 'Saving...' : initial ? 'Save Changes' : 'Add Note'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -673,13 +735,23 @@ function NoteCard({
 
       {/* Content preview — click to open read dialog */}
       {note.content && (
-        <p
-          className="text-xs text-muted-foreground line-clamp-3 flex-1 leading-relaxed cursor-pointer hover:text-foreground/70 transition-colors"
-          onClick={onView}
-        >
-          {/* Strip markdown symbols for plain preview */}
-          {note.content.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1').replace(/^[-\d.]+\s+(\[[ x]\]\s+)?/gm, '')}
-        </p>
+        isEncrypted(note.content) ? (
+          <div
+            className="flex items-center gap-1.5 py-3 text-xs text-amber-500 font-medium cursor-pointer hover:text-amber-600 transition-colors"
+            onClick={onView}
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Encrypted Note</span>
+          </div>
+        ) : (
+          <p
+            className="text-xs text-muted-foreground line-clamp-3 flex-1 leading-relaxed cursor-pointer hover:text-foreground/70 transition-colors"
+            onClick={onView}
+          >
+            {/* Strip markdown symbols for plain preview */}
+            {note.content.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1').replace(/^[-\d.]+\s+(\[[ x]\]\s+)?/gm, '')}
+          </p>
+        )
       )}
 
       {/* Footer */}
@@ -705,6 +777,93 @@ function NoteCard({
   )
 }
 
+// ─── Decrypt Dialog ──────────────────────────────────────────────────────────
+
+function DecryptDialog({
+  open,
+  onClose,
+  onDecrypt,
+}: {
+  open: boolean
+  onClose: () => void
+  onDecrypt: (password: string) => Promise<boolean>
+}) {
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // Clear state when opening/closing
+  useState(() => {
+    if (!open) {
+      setPassword('')
+      setError(null)
+    }
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Lock className="w-5 h-5 text-amber-500" />
+            Decrypt Note
+          </DialogTitle>
+        </DialogHeader>
+        <div className="py-3 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            This note is encrypted. Please enter the password to view or edit it.
+          </p>
+          <div className="grid gap-1.5">
+            <Label>Password</Label>
+            <Input
+              type="password"
+              placeholder="Enter encryption password..."
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value)
+                setError(null)
+              }}
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  if (!password) return
+                  setLoading(true)
+                  const success = await onDecrypt(password)
+                  setLoading(false)
+                  if (success) {
+                    onClose()
+                  } else {
+                    setError('Incorrect password. Please try again.')
+                  }
+                }
+              }}
+            />
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </div>
+        </div>
+        <DialogFooter className="gap-2 flex-row justify-end">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            disabled={loading || !password}
+            onClick={async () => {
+              setLoading(true)
+              const success = await onDecrypt(password)
+              setLoading(false)
+              if (success) {
+                onClose()
+              } else {
+                setError('Incorrect password. Please try again.')
+              }
+            }}
+          >
+            {loading ? 'Decrypting...' : 'Decrypt'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main NotesContent ────────────────────────────────────────────────────────
 
 export function NotesContent() {
@@ -720,6 +879,11 @@ export function NotesContent() {
   const [deleteTarget, setDeleteTarget] = useState<Note | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
+  // Decryption flow states
+  const [decryptOpen, setDecryptOpen] = useState(false)
+  const [pendingAction, setPendingAction] = useState<{ type: 'view' | 'edit'; note: Note } | null>(null)
+  const [decryptedPassword, setDecryptedPassword] = useState('')
+
   const allTags = Array.from(new Set(notes.flatMap((n) => n.tags)))
 
   const filtered = notes.filter((n) => {
@@ -727,6 +891,42 @@ export function NotesContent() {
     if (filterTag && !n.tags.includes(filterTag)) return false
     return true
   })
+
+  const handleNoteAction = (type: 'view' | 'edit', note: Note) => {
+    if (isEncrypted(note.content)) {
+      setPendingAction({ type, note })
+      setDecryptOpen(true)
+    } else {
+      setDecryptedPassword('')
+      if (type === 'view') {
+        setReadNote(note)
+        setReadOpen(true)
+      } else {
+        handleEdit(note)
+      }
+    }
+  }
+
+  const handleDecrypt = async (password: string): Promise<boolean> => {
+    if (!pendingAction) return false
+    try {
+      const decrypted = await decryptText(pendingAction.note.content, password)
+      setDecryptedPassword(password)
+      const decryptedNote = { ...pendingAction.note, content: decrypted }
+      if (pendingAction.type === 'view') {
+        setReadNote(decryptedNote)
+        setReadOpen(true)
+      } else {
+        setReadOpen(false)
+        setEditNote(decryptedNote)
+        setDialogOpen(true)
+      }
+      return true
+    } catch (err) {
+      console.error(err)
+      return false
+    }
+  }
 
   const handleEdit = (note: Note) => {
     setReadOpen(false)
@@ -813,8 +1013,8 @@ export function NotesContent() {
               <NoteCard
                 key={note.id}
                 note={note}
-                onView={() => { setReadNote(note); setReadOpen(true) }}
-                onEdit={() => handleEdit(note)}
+                onView={() => handleNoteAction('view', note)}
+                onEdit={() => handleNoteAction('edit', note)}
                 onDelete={() => handleDeleteRequest(note)}
                 onPin={() => togglePin(note.id)}
               />
@@ -840,6 +1040,7 @@ export function NotesContent() {
         onClose={() => { setDialogOpen(false); setEditNote(null) }}
         initial={editNote}
         allTags={allTags}
+        defaultPassword={decryptedPassword}
         onSave={(data) => {
           if (editNote) {
             updateNote(editNote.id, { title: data.title, content: data.content, tags: data.tags, color: data.color })
@@ -854,7 +1055,7 @@ export function NotesContent() {
         note={readNote}
         open={readOpen}
         onClose={() => setReadOpen(false)}
-        onEdit={() => readNote && handleEdit(readNote)}
+        onEdit={() => readNote && handleNoteAction('edit', readNote)}
       />
 
       {/* Delete Confirm Dialog */}
@@ -866,6 +1067,13 @@ export function NotesContent() {
           if (deleteTarget) deleteNote(deleteTarget.id)
           setDeleteTarget(null)
         }}
+      />
+
+      {/* Decrypt Dialog */}
+      <DecryptDialog
+        open={decryptOpen}
+        onClose={() => { setDecryptOpen(false); setPendingAction(null) }}
+        onDecrypt={handleDecrypt}
       />
     </div>
   )
